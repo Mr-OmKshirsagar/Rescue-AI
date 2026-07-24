@@ -1,0 +1,6 @@
+{
+  "name": "Emergency Call Services",
+  "description": "AI-powered emergency response platform with intelligent medical triage, image analysis, and automated dispatch.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
