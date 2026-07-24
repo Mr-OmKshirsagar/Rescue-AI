@@ -831,9 +831,22 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Emergency Response Platform running at http://0.0.0.0:${PORT}`);
-  });
+  function listenOnPort(portToUse: number) {
+    const server = app.listen(portToUse, "0.0.0.0", () => {
+      console.log(`Emergency Response Platform running at http://localhost:${portToUse}`);
+    });
+    server.on("error", (err: any) => {
+      if (err.code === "EADDRINUSE") {
+        console.warn(`Port ${portToUse} is in use, attempting port ${portToUse + 1}...`);
+        listenOnPort(portToUse + 1);
+      } else {
+        console.error("Server error:", err);
+      }
+    });
+  }
+
+  listenOnPort(PORT);
 }
 
 startServer();
+

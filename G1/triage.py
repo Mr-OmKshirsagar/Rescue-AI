@@ -1,21 +1,28 @@
 """
 routes/triage.py
 
-POST /triage/         - Run AI triage on an incident's conversation and persist the result.
+POST /triage/  - Run AI triage on an incident's conversation and persist the result.
 GET  /triage/{incident_id} - Fetch the most recent triage result for an incident.
+
+Assumes the project's existing patterns (per README.md):
+- app.database.mongodb exposes get_database() returning the Motor database,
+  with an "incidents" collection keyed by Mongo ObjectId.
+- app.services.socket_service exposes an async emit helper used to broadcast
+  the INCIDENT_UPDATED event to subscribed clients.
+
+If your actual module names differ slightly, adjust the two imports below -
+everything else is self-contained.
 """
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
 
 from bson import ObjectId
 from bson.errors import InvalidId
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 
 from app.schemas.triage_schema import TriageRequest, TriageResponse
 from app.services import gemini_service
-from app.services.socket_service import SocketIOService
 
 logger = logging.getLogger(__name__)
 
@@ -23,44 +30,39 @@ router = APIRouter(prefix="/triage", tags=["triage"])
 
 INCIDENT_UPDATED_EVENT = "INCIDENT_UPDATED"
 
-# Global socket service instance (injected by main.py)
-socket_service: Optional[SocketIOService] = None
-
-
-def set_socket_service(service: SocketIOService):
-    """Set Socket.IO service instance from main app."""
-    global socket_service
-    socket_service = service
-
 
 def _get_incidents_collection():
-    """Resolves the incidents collection from mongodb module."""
+    """Resolves the incidents collection from the project's mongodb module.
+    Isolated into a helper so a missing/renamed module gives one clear error
+    instead of an import crash at startup."""
     try:
-        from app.database.mongodb import get_db, get_database
-        db_fn = get_database if get_database else get_db
-        db = db_fn()
-        if db is None:
-            # Fall back if connection is lazily managed
-            from app.database.mongodb import db as global_db
-            db = global_db
-        return db["incidents"]
-    except Exception as e:
+        from app.database.mongodb import get_database
+    except ImportError as e:
         raise RuntimeError(
-            "Could not get incidents collection from app.database.mongodb."
+            "Could not import get_database from app.database.mongodb. "
+            "Update the import in app/routes/triage.py to match your project's "
+            "database module."
         ) from e
+
+    db = get_database()
+    return db["incidents"]
 
 
 async def _broadcast_incident_updated(incident_id: str, payload: dict) -> None:
-    """Best-effort Socket.IO broadcast for triage updates."""
-    global socket_service
+    """Best-effort Socket.IO broadcast. Triage should still succeed and return
+    a valid response even if the socket layer is unavailable or named
+    differently in this project."""
     try:
-        if socket_service:
-            await socket_service.emit_incident_updated({"incident_id": incident_id, **payload})
-        else:
-            from app.services.socket_service import sio
-            await sio.emit(INCIDENT_UPDATED_EVENT, {"incident_id": incident_id, **payload})
-    except Exception as e:
-        logger.warning("Failed to broadcast INCIDENT_UPDATED for %s: %s", incident_id, e)
+        from app.services.socket_service import sio
+
+        await sio.emit(INCIDENT_UPDATED_EVENT, {"incident_id": incident_id, **payload})
+    except ImportError:
+        logger.warning(
+            "app.services.socket_service.sio not found - skipping real-time broadcast. "
+            "Wire this up to your existing Socket.IO server to enable live updates."
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.error("Failed to broadcast INCIDENT_UPDATED for %s: %s", incident_id, e)
 
 
 @router.post("/", response_model=TriageResponse)
@@ -83,20 +85,13 @@ async def run_triage(request: TriageRequest):
         symptoms=request.symptoms,
     )
 
-    hospital_val = result.get("recommended_hospital_type") or result.get("recommended_hospital", "General")
-    symptoms_val = result.get("symptoms", [])
-
     update_fields = {
         "conversation": request.conversation,
-        "symptoms": ", ".join(symptoms_val) if isinstance(symptoms_val, list) and symptoms_val else (request.symptoms or incident.get("symptoms")),
+        "symptoms": ", ".join(result["symptoms"]) if result["symptoms"] else incident.get("symptoms"),
         "severity": result["severity"],
-        "hospital": hospital_val,
-        "recommended_hospital": hospital_val,
+        "hospital": result["recommended_hospital_type"],
         "triage_summary": result["summary"],
-        "summary": result["summary"],
         "triage_confidence": result["confidence"],
-        "confidence": result["confidence"],
-        "status": f"Triage Complete - {result['severity']}",
         "updated_at": datetime.now(timezone.utc),
     }
 
@@ -105,11 +100,10 @@ async def run_triage(request: TriageRequest):
     response = TriageResponse(
         incident_id=request.incident_id,
         severity=result["severity"],
-        symptoms=symptoms_val if isinstance(symptoms_val, list) else [],
-        recommended_hospital=hospital_val,
+        symptoms=result["symptoms"],
+        recommended_hospital=result["recommended_hospital_type"],
         summary=result["summary"],
         confidence=result["confidence"],
-        created_at=datetime.now(timezone.utc),
     )
 
     await _broadcast_incident_updated(request.incident_id, response.model_dump(mode="json"))
@@ -135,19 +129,14 @@ async def get_triage(incident_id: str):
         raise HTTPException(status_code=404, detail="No triage result found for this incident yet")
 
     symptoms = incident.get("symptoms") or ""
-    if isinstance(symptoms, str):
-        symptoms_list = [s.strip() for s in symptoms.split(",") if s.strip()]
-    elif isinstance(symptoms, list):
-        symptoms_list = symptoms
-    else:
-        symptoms_list = []
+    symptoms_list = [s.strip() for s in symptoms.split(",") if s.strip()] if isinstance(symptoms, str) else symptoms
 
     return TriageResponse(
         incident_id=incident_id,
         severity=incident.get("severity", "Moderate"),
         symptoms=symptoms_list,
-        recommended_hospital=incident.get("hospital") or incident.get("recommended_hospital", "General"),
-        summary=incident.get("triage_summary") or incident.get("summary", ""),
-        confidence=incident.get("triage_confidence") or incident.get("confidence", 1.0),
-        created_at=incident.get("updated_at") or datetime.now(timezone.utc),
+        recommended_hospital=incident.get("hospital", "General"),
+        summary=incident.get("triage_summary", ""),
+        confidence=incident.get("triage_confidence", 0.0),
+        created_at=incident.get("updated_at", datetime.now(timezone.utc)),
     )

@@ -39,34 +39,8 @@ class DispatchResponse(BaseModel):
         }
 
 
-class TriageRequest(BaseModel):
-    """Triage assessment request."""
-    incident_id: str
-    conversation: str = Field(..., min_length=1)
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "incident_id": "507f1f77bcf86cd799439011",
-                "conversation": "Patient reports chest pain and shortness of breath..."
-            }
-        }
+from app.schemas.triage_schema import TriageRequest, TriageResponse
 
-
-class TriageResponse(BaseModel):
-    """Triage assessment response."""
-    severity: str
-    summary: str
-    recommended_hospital: str
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "severity": "High",
-                "summary": "Patient experiencing acute chest pain with dyspnea. Possible MI.",
-                "recommended_hospital": "Trauma Center"
-            }
-        }
 
 
 class CameraLinkRequest(BaseModel):
