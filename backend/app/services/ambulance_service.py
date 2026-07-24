@@ -1,10 +1,9 @@
 """Ambulance simulation service."""
 import logging
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable, Awaitable
 from datetime import datetime
 import math
-import random
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -16,6 +15,7 @@ class AmbulanceService:
     def __init__(self):
         """Initialize ambulance service."""
         self.active_ambulances: Dict[str, Dict[str, Any]] = {}
+        self._default_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None
     
     async def start_ambulance_simulation(
         self,
@@ -24,7 +24,7 @@ class AmbulanceService:
         start_lon: float,
         destination_lat: float,
         destination_lon: float,
-        callback: callable
+        callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None
     ) -> str:
         """
         Start ambulance simulation for an incident.
@@ -44,7 +44,9 @@ class AmbulanceService:
             # Calculate distance and ETA
             distance = self._calculate_distance(start_lat, start_lon, destination_lat, destination_lon)
             speed_ms = settings.AMBULANCE_SPEED * 1000 / 3600  # Convert km/h to m/s
-            estimated_duration_seconds = (distance * 1000) / speed_ms if speed_ms > 0 else 300
+            estimated_duration_seconds = max(1.0, (distance * 1000) / speed_ms if speed_ms > 0 else 300)
+            update_interval = max(1, settings.AMBULANCE_UPDATE_INTERVAL)
+            resolved_callback = callback or self._default_callback
             
             ambulance_data = {
                 "incident_id": incident_id,
@@ -61,8 +63,8 @@ class AmbulanceService:
                 "speed_kmh": settings.AMBULANCE_SPEED,
                 "status": "en_route",
                 "created_at": datetime.utcnow(),
-                "callback": callback,
-                "update_interval": settings.AMBULANCE_UPDATE_INTERVAL
+                "callback": resolved_callback,
+                "update_interval": update_interval
             }
             
             self.active_ambulances[ambulance_id] = ambulance_data
@@ -120,9 +122,10 @@ class AmbulanceService:
                     ambulance["distance_m"] = 0
                 
                 # Call callback with updated position
-                if ambulance["callback"]:
+                callback = ambulance.get("callback")
+                if callback:
                     try:
-                        await ambulance["callback"]({
+                        await callback({
                             "ambulance_id": ambulance_id,
                             "incident_id": ambulance["incident_id"],
                             "latitude": ambulance["current_lat"],

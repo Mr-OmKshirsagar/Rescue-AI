@@ -8,12 +8,16 @@ Responsibilities:
 - Ask Gemini to extract symptoms, estimate severity, recommend a hospital type,
   and produce a short clinical-style summary
 - Return a clean, validated dict the rest of the app can trust
+
+This module is defensive by design: Gemini is asked to return strict JSON,
+but LLM output is never trusted blindly. Every field is validated/clamped
+before it reaches the database or the client.
 """
 
 import json
 import logging
 import re
-from typing import Dict, Any, Optional
+from typing import Optional
 
 import google.generativeai as genai
 
@@ -96,7 +100,7 @@ def _validate_and_normalize(data: dict) -> dict:
         logger.warning("Gemini returned unrecognized severity %r, defaulting to 'Moderate'", severity)
         severity = "Moderate"
 
-    hospital_type = data.get("recommended_hospital_type") or data.get("recommended_hospital")
+    hospital_type = data.get("recommended_hospital_type")
     if hospital_type not in VALID_HOSPITAL_TYPES:
         logger.warning(
             "Gemini returned unrecognized hospital type %r, defaulting to 'General'", hospital_type
@@ -104,9 +108,7 @@ def _validate_and_normalize(data: dict) -> dict:
         hospital_type = "General"
 
     symptoms = data.get("symptoms")
-    if isinstance(symptoms, str):
-        symptoms = [s.strip() for s in symptoms.split(",") if s.strip()]
-    elif not isinstance(symptoms, list):
+    if not isinstance(symptoms, list):
         symptoms = []
     symptoms = [str(s).strip() for s in symptoms if str(s).strip()][:10]
 
@@ -186,29 +188,3 @@ async def analyze_triage(conversation: str, symptoms: Optional[str] = None) -> d
     except Exception as e:  # noqa: BLE001 - external API call, want a clean fallback
         logger.error("Gemini triage request failed: %s", e)
         return _fallback_result("AI service error")
-
-
-class GeminiService:
-    """Service class wrapper for Gemini AI operations."""
-
-    MODEL_NAME = MODEL_NAME
-
-    @staticmethod
-    async def analyze_triage(conversation: str, symptoms: Optional[str] = None) -> Dict[str, Any]:
-        """Analyze emergency conversation using Gemini Flash."""
-        result = await analyze_triage(conversation, symptoms)
-        # Ensure recommended_hospital key is populated for backward compatibility
-        result["recommended_hospital"] = result.get("recommended_hospital_type", "General")
-        return result
-
-    @staticmethod
-    async def extract_symptoms(conversation: str) -> str:
-        """Extract symptoms from conversation."""
-        result = await analyze_triage(conversation)
-        return ", ".join(result.get("symptoms", []))
-
-    @staticmethod
-    async def generate_summary(conversation: str) -> str:
-        """Generate medical summary from conversation."""
-        result = await analyze_triage(conversation)
-        return result.get("summary", "")
