@@ -8,6 +8,8 @@ import {
 import { APIProvider, Map, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
 import { EmergencyIncident, Hospital } from '../types';
 import { MOCK_INCIDENT, MOCK_HOSPITALS } from '../data/mockData';
+import { useSocket } from '../hooks/useSocket';
+import { getAllDispatch } from '../utils/api';
 
 interface HospitalDashboardProps {
   isEmergencyAlertActive: boolean;
@@ -20,10 +22,11 @@ export const HospitalDashboard: React.FC<HospitalDashboardProps> = ({
   onToggleEmergencyAlert,
   onNavigateToVision
 }) => {
+  const { socket, connected, incidents: liveIncidents } = useSocket();
   const [incident, setIncident] = useState<EmergencyIncident>(MOCK_INCIDENT);
   const [isLoading, setIsLoading] = useState(false);
   const [etaCountdown, setEtaCountdown] = useState(incident.etaSeconds);
-  const [ambulanceProgress, setAmbulanceProgress] = useState(0.42); // 0 to 1 along route
+  const [ambulanceProgress, setAmbulanceProgress] = useState(0.42);
   const [speedMph, setSpeedMph] = useState(incident.speedMph);
   const [currentTime, setCurrentTime] = useState<string>('');
   const [mapMode, setMapMode] = useState<'google' | 'tactical'>('google');
@@ -35,6 +38,52 @@ export const HospitalDashboard: React.FC<HospitalDashboardProps> = ({
     '';
 
   const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
+
+  // Fetch incidents from backend on mount
+  useEffect(() => {
+    const fetchIncidents = async () => {
+      try {
+        const data = await getAllDispatch();
+        console.log('📊 Fetched incidents:', data);
+        // If there are real incidents, use the first one
+        if (data.incidents && data.incidents.length > 0) {
+          const latestIncident = data.incidents[0];
+          setIncident({
+            ...MOCK_INCIDENT,
+            caseNumber: latestIncident.incident_id || MOCK_INCIDENT.caseNumber,
+            location: latestIncident.location || MOCK_INCIDENT.location,
+            patientName: latestIncident.caller_name || MOCK_INCIDENT.patientName,
+            coordinates: {
+              lat: latestIncident.latitude || MOCK_INCIDENT.coordinates.lat,
+              lng: latestIncident.longitude || MOCK_INCIDENT.coordinates.lng
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch incidents:', error);
+      }
+    };
+
+    fetchIncidents();
+  }, []);
+
+  // Listen for new incidents from WebSocket
+  useEffect(() => {
+    if (liveIncidents.length > 0) {
+      const latestIncident = liveIncidents[0];
+      console.log('🚨 Updating incident from WebSocket:', latestIncident);
+      setIncident({
+        ...MOCK_INCIDENT,
+        caseNumber: latestIncident.incident_id || MOCK_INCIDENT.caseNumber,
+        location: latestIncident.location || MOCK_INCIDENT.location,
+        patientName: latestIncident.caller_name || MOCK_INCIDENT.patientName,
+        coordinates: {
+          lat: latestIncident.latitude || MOCK_INCIDENT.coordinates.lat,
+          lng: latestIncident.longitude || MOCK_INCIDENT.coordinates.lng
+        }
+      });
+    }
+  }, [liveIncidents]);
 
   // Live clock & moving ambulance progress animation
   useEffect(() => {

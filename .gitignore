@@ -1,8 +1,43 @@
-node_modules/
-build/
-dist/
-coverage/
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Environment Variables
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Python Cache
+.pytest_cache/
+.mypy_cache/
+
+# Logs
 *.log
-.env*
-!.env.example
+
+# Uploads
+uploads/
+
+# MongoDB
+*.db
+
+# Build
+dist/
+build/
+
+# Coverage
+.coverage
+htmlcov/
