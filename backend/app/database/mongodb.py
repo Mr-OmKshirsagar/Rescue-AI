@@ -3,6 +3,7 @@ import logging
 from motor.motor_asyncio import AsyncIOMotorClient as AsyncClient
 from typing import TYPE_CHECKING
 from datetime import datetime
+from fastapi import HTTPException
 from app.config import settings
 
 if TYPE_CHECKING:
@@ -20,7 +21,11 @@ async def connect_to_mongo():
     """Connect to MongoDB."""
     global db_client, db
     try:
-        db_client = AsyncClient(settings.MONGODB_URI)
+        db_client = AsyncClient(
+            settings.MONGODB_URI,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+        )
         db = db_client[settings.DATABASE_NAME]
         # Test connection
         await db_client.admin.command("ping")
@@ -64,6 +69,8 @@ async def create_indexes():
 
 def get_db():
     """Get database connection."""
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database connection is unavailable")
     return db
 
 
