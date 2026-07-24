@@ -223,6 +223,8 @@ async def create_indexes():
 
 def get_db():
     """Get database connection."""
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database connection is unavailable")
     return db
 
 

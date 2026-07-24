@@ -51,8 +51,7 @@ async def lifespan(app: FastAPI):
         await connect_to_mongo()
         logger.info("MongoDB connected")
     except Exception as e:
-        logger.error(f"Failed to connect to MongoDB: {e}")
-        raise
+        logger.warning(f"MongoDB unavailable, starting without database: {e}")
     
     # Setup Socket.IO handlers
     setup_socket_handlers()
